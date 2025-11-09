@@ -21,6 +21,7 @@ import {
   ArrowRight,
   Check,
   ChevronDown,
+  RefreshCw,
 } from "lucide-react";
 import { toast } from "sonner";
 import { HexColorPicker } from "react-colorful";
@@ -75,6 +76,7 @@ interface DesignLayer {
     dpi?: number;
   };
   cost: number;
+  designSizeId?: string; // Size preset ID (pocket, small, medium, large)
 }
 
 const CATEGORIES: Category[] = [
@@ -86,6 +88,48 @@ const CATEGORIES: Category[] = [
 
 const SIZES = ["XS", "S", "M", "L", "XL", "XXL"];
 const FONTS = ["Arial", "Helvetica", "Times New Roman", "Courier New", "Georgia", "Verdana"];
+
+// Development flag - Set to false to hide "Refresh Sizes" button in production
+const IS_DEVELOPMENT = false; // Change to false when project is ready for production
+
+// Standard design sizes (in pixels at 300 DPI)
+// These represent the maximum dimensions for design elements
+// NOTE: After changing dimensions here, click "Refresh Sizes" button to update existing elements on canvas
+const STANDARD_DESIGN_SIZES = [
+  { 
+    id: "pocket", 
+    name: "Pocket Size", 
+    width: 90, // 3 inches at 300 DPI
+    height: 90, 
+    description: "3\" × 3\"",
+    price: 50 // Fixed price in ₹
+  },
+  { 
+    id: "small", 
+    name: "Small", 
+    width: 150, // 5 inches at 300 DPI
+    height: 150, 
+    description: "5\" × 5\"",
+    price: 100 // Fixed price in ₹
+  },
+  { 
+    id: "medium", 
+    name: "Medium", 
+    width: 210, // 7 inches at 300 DPI
+    height: 280, // Updated height (280px = ~9.33 inches at 300 DPI)
+    description: "7\" × 9.33\"",
+    price: 150 // Fixed price in ₹
+  },
+  { 
+    id: "large", 
+    name: "Large", 
+    width: 300, // 10 inches at 300 DPI
+    height: 300, 
+    description: "10\" × 10\"",
+    price: 200 // Fixed price in ₹
+  },
+];
+
 // Dynamic pricing: cost derived from rendered object area (in pixels)
 const PRICE_PER_PIXEL = 0.02; // ₹ per pixel area
 const DPI = 300; // standard printing resolution
@@ -224,6 +268,7 @@ export default function Customize() {
   const [transparentColor] = useState<string>("#ffffff");
   const [showColorDropdown, setShowColorDropdown] = useState(false);
   const colorDropdownRef = useRef<HTMLDivElement>(null);
+  const [selectedDesignSize, setSelectedDesignSize] = useState<string>("medium"); // Default to medium
   // Load design by id from navigation state; also fetch product so images load
   useEffect(() => {
     const id = (location as any)?.state?.loadDesignId as string | undefined;
@@ -271,6 +316,24 @@ export default function Customize() {
     setFrontCustomizationCost(0);
     setBackCustomizationCost(0);
   }, [basePrice]);
+  // Helper: disable resizing but allow movement
+  const configureObjectControls = (obj: any) => {
+    // Disable all resize controls, but keep move and rotate
+    obj.set({
+      hasControls: true,
+      hasBorders: true,
+      lockScalingX: true, // Disable horizontal scaling
+      lockScalingY: true, // Disable vertical scaling
+      lockUniScaling: true, // Disable uniform scaling
+      lockSkewingX: true, // Disable skewing
+      lockSkewingY: true, // Disable skewing
+      // Keep these enabled for movement and rotation
+      lockMovementX: false,
+      lockMovementY: false,
+      lockRotation: false,
+    });
+  };
+
   // Helper: initialize Fabric canvas
   const setupCanvasInstance = useCallback((el: HTMLCanvasElement) => {
     if (didInitCanvasRef.current || fabricCanvas) return;
@@ -478,6 +541,8 @@ export default function Customize() {
                 (text as any).name = "custom-text";
                 (text as any).layerId = layer.id;
                 (text as any).designSide = designSide;
+                (text as any).designSizeId = (layer as any).designSizeId || selectedDesignSize;
+                configureObjectControls(text);
                 fabricCanvas.add(text);
                 // eslint-disable-next-line no-console
                 console.log("[Customize] Added text:", layer.data.content, "at position:", layer.data.x, layer.data.y);
@@ -493,6 +558,8 @@ export default function Customize() {
                   (img as any).name = "custom-image";
                   (img as any).layerId = layer.id;
                   (img as any).designSide = designSide;
+                  (img as any).designSizeId = (layer as any).designSizeId || selectedDesignSize;
+                  configureObjectControls(img);
                   fabricCanvas.add(img);
                   fabricCanvas.renderAll();
                   // eslint-disable-next-line no-console
@@ -569,8 +636,15 @@ export default function Customize() {
               font: obj.fontFamily || currentLayer.data.font,
             };
 
-            // Check if position actually changed
-            if (
+            // Sync size preset ID from canvas object
+            if (obj.designSizeId && currentLayer.designSizeId !== obj.designSizeId) {
+              updatedLayers[layerIndex] = {
+                ...currentLayer,
+                data: newData,
+                designSizeId: obj.designSizeId
+              };
+              hasChanges = true;
+            } else if (
               currentLayer.data.x !== newData.x ||
               currentLayer.data.y !== newData.y ||
               currentLayer.data.rotation !== newData.rotation ||
@@ -603,10 +677,9 @@ export default function Customize() {
       updateTimeout = setTimeout(updateLayerPositions, 100);
     };
 
-    // Add event listeners for object changes
+    // Add event listeners for object changes (scaling disabled, but keep listener for safety)
     fabricCanvas.on("object:modified", debouncedUpdate);
     fabricCanvas.on("object:moving", debouncedUpdate);
-    fabricCanvas.on("object:scaling", debouncedUpdate);
     fabricCanvas.on("object:rotating", debouncedUpdate);
 
     // Cleanup
@@ -614,7 +687,6 @@ export default function Customize() {
       clearTimeout(updateTimeout);
       fabricCanvas.off("object:modified", debouncedUpdate);
       fabricCanvas.off("object:moving", debouncedUpdate);
-      fabricCanvas.off("object:scaling", debouncedUpdate);
       fabricCanvas.off("object:rotating", debouncedUpdate);
     };
   }, [fabricCanvas, designSide]);
@@ -625,14 +697,27 @@ export default function Customize() {
     
     const handleObjectSelection = () => {
       const activeObject = fabricCanvas.getActiveObject();
-      if (activeObject && (activeObject as any).name === "custom-text") {
-        // Populate text input with selected text content
-        setTextInput((activeObject as any).text || "");
-        setFontSize((activeObject as any).fontSize || 40);
-        setTextColor((activeObject as any).fill || "#000000");
-        setSelectedFont((activeObject as any).fontFamily || "Arial");
+      if (activeObject) {
+        const obj = activeObject as any;
+        const objSizeId = obj.designSizeId || selectedDesignSize;
+        
+        // Update size selector to match selected object's size
+        if (objSizeId && STANDARD_DESIGN_SIZES.find(s => s.id === objSizeId)) {
+          setSelectedDesignSize(objSizeId);
+        }
+        
+        if (obj.name === "custom-text") {
+          // Populate text input with selected text content
+          setTextInput(obj.text || "");
+          setFontSize(obj.fontSize || 40);
+          setTextColor(obj.fill || "#000000");
+          setSelectedFont(obj.fontFamily || "Arial");
+        } else {
+          // Clear text input when no text is selected
+          setTextInput("");
+        }
       } else {
-        // Clear text input when no text is selected
+        // Clear text input when no object is selected
         setTextInput("");
       }
     };
@@ -648,18 +733,37 @@ export default function Customize() {
       fabricCanvas.off("selection:updated", handleObjectSelection);
       fabricCanvas.off("selection:cleared");
     };
-  }, [fabricCanvas]);
+  }, [fabricCanvas, selectedDesignSize]);
 
-  // Dynamic pricing updates on canvas object changes
+  // Fixed price-based pricing updates on canvas object changes
   useEffect(() => {
     if (!fabricCanvas) return;
 
     const calculateTotalPrice = () => {
       const objects = fabricCanvas.getObjects();
-      let totalAreaPixels = 0;
-      let maxWidthPixels = 0;
-      let maxHeightPixels = 0;
-      const perLayerMetrics: Array<{
+      
+      // Calculate for both front and back sides
+      let frontMaxPrice = 0;
+      let backMaxPrice = 0;
+      let frontTotalAreaPixels = 0;
+      let backTotalAreaPixels = 0;
+      let frontMaxWidthPixels = 0;
+      let frontMaxHeightPixels = 0;
+      let backMaxWidthPixels = 0;
+      let backMaxHeightPixels = 0;
+      const frontPerLayerMetrics: Array<{
+        id: string;
+        type: string;
+        widthPixels: number;
+        heightPixels: number;
+        areaPixels: number;
+        widthInches: number;
+        heightInches: number;
+        areaInches: number;
+        dpi?: number;
+        cost: number;
+      }> = [];
+      const backPerLayerMetrics: Array<{
         id: string;
         type: string;
         widthPixels: number;
@@ -678,33 +782,44 @@ export default function Customize() {
           return;
         }
 
-        // Only calculate area for the objects belonging to the currently visible side.
+        // Get the side this object belongs to
         const objSide = (obj as any).designSide as ("front" | "back" | undefined);
-        if (objSide && objSide !== designSide) return;
+        if (!objSide) return; // Skip if no side assigned
 
-        // Determine per-layer DPI: prefer saved layer DPI; use defaults by type
+        // Get the size preset ID from the object
+        const sizeId = (obj as any).designSizeId;
+        const sizePreset = sizeId ? STANDARD_DESIGN_SIZES.find(s => s.id === sizeId) : null;
+        
+        // Use fixed price if size preset exists, otherwise fallback to pixel-based
+        let elementPrice = 0;
+        if (sizePreset && sizePreset.price) {
+          elementPrice = sizePreset.price;
+        } else {
+          // Fallback to pixel-based pricing if no size preset
+          const layerDPI = (obj as any).dpi
+            ? Number((obj as any).dpi)
+            : ((obj.type === 'text' || obj.type === 'textbox') ? DEFAULT_TEXT_DPI : 300);
+          
+          const widthPixels = typeof (obj as any).getScaledWidth === 'function' ? (obj as any).getScaledWidth() : Math.abs((obj.width || 0) * (obj.scaleX || 1));
+          const heightPixels = typeof (obj as any).getScaledHeight === 'function' ? (obj as any).getScaledHeight() : Math.abs((obj.height || 0) * (obj.scaleY || 1));
+          const areaPixels = widthPixels * heightPixels;
+          elementPrice = areaPixels * PRICE_PER_PIXEL;
+        }
+
+        // Calculate metrics for display (still needed for UI)
         const layerDPI = (obj as any).dpi
           ? Number((obj as any).dpi)
           : ((obj.type === 'text' || obj.type === 'textbox') ? DEFAULT_TEXT_DPI : 300);
 
-        // Correct scaled dimensions
         const widthPixels = typeof (obj as any).getScaledWidth === 'function' ? (obj as any).getScaledWidth() : Math.abs((obj.width || 0) * (obj.scaleX || 1));
         const heightPixels = typeof (obj as any).getScaledHeight === 'function' ? (obj as any).getScaledHeight() : Math.abs((obj.height || 0) * (obj.scaleY || 1));
-
-        // Pixel area
         const areaPixels = widthPixels * heightPixels;
 
-        // Convert to inches using actual layer DPI
         const widthInches = widthPixels / layerDPI;
         const heightInches = heightPixels / layerDPI;
         const areaInches = areaPixels / (layerDPI * layerDPI);
-        const cost = areaPixels * PRICE_PER_PIXEL;
 
-        maxWidthPixels = Math.max(maxWidthPixels, widthPixels);
-        maxHeightPixels = Math.max(maxHeightPixels, heightPixels);
-        totalAreaPixels += areaPixels;
-
-        perLayerMetrics.push({
+        const metrics = {
           id: (obj as any).layerId,
           type: (obj as any).type as string,
           widthPixels,
@@ -714,26 +829,54 @@ export default function Customize() {
           heightInches,
           areaInches,
           dpi: layerDPI,
-          cost,
-        });
+          cost: elementPrice,
+        };
+
+        if (objSide === "front") {
+          frontMaxPrice = Math.max(frontMaxPrice, elementPrice);
+          frontMaxWidthPixels = Math.max(frontMaxWidthPixels, widthPixels);
+          frontMaxHeightPixels = Math.max(frontMaxHeightPixels, heightPixels);
+          frontTotalAreaPixels += areaPixels;
+          frontPerLayerMetrics.push(metrics);
+        } else if (objSide === "back") {
+          backMaxPrice = Math.max(backMaxPrice, elementPrice);
+          backMaxWidthPixels = Math.max(backMaxWidthPixels, widthPixels);
+          backMaxHeightPixels = Math.max(backMaxHeightPixels, heightPixels);
+          backTotalAreaPixels += areaPixels;
+          backPerLayerMetrics.push(metrics);
+        }
       });
 
-      // Overall metrics using fixed 300 DPI for bounding box
-      const widthInches = maxWidthPixels / 300;
-      const heightInches = maxHeightPixels / 300;
-      const areaInches = totalAreaPixels / (300 * 300);
-      const customizationCost = totalAreaPixels * PRICE_PER_PIXEL;
+      // Calculate metrics for front
+      const frontWidthInches = frontMaxWidthPixels / 300;
+      const frontHeightInches = frontMaxHeightPixels / 300;
+      const frontAreaInches = frontTotalAreaPixels / (300 * 300);
       
-      // Update the appropriate side's customization cost
-      if (designSide === "front") {
-        setFrontCustomizationCost(customizationCost);
-        setFrontDesignMetrics({ widthInches, heightInches, areaInches, totalPixels: totalAreaPixels, perLayer: perLayerMetrics });
-        console.log(`[Pricing-front] Total pixels: ${totalAreaPixels.toFixed(2)}px², Area: ${areaInches.toFixed(2)} in², Size: ${widthInches.toFixed(2)}" x ${heightInches.toFixed(2)}", Cost: ₹${customizationCost.toFixed(2)}`);
-      } else {
-        setBackCustomizationCost(customizationCost);
-        setBackDesignMetrics({ widthInches, heightInches, areaInches, totalPixels: totalAreaPixels, perLayer: perLayerMetrics });
-        console.log(`[Pricing-back] Total pixels: ${totalAreaPixels.toFixed(2)}px², Area: ${areaInches.toFixed(2)} in², Size: ${widthInches.toFixed(2)}" x ${heightInches.toFixed(2)}", Cost: ₹${customizationCost.toFixed(2)}`);
-      }
+      // Calculate metrics for back
+      const backWidthInches = backMaxWidthPixels / 300;
+      const backHeightInches = backMaxHeightPixels / 300;
+      const backAreaInches = backTotalAreaPixels / (300 * 300);
+      
+      // Update both sides' customization costs
+      setFrontCustomizationCost(frontMaxPrice);
+      setFrontDesignMetrics({ 
+        widthInches: frontWidthInches, 
+        heightInches: frontHeightInches, 
+        areaInches: frontAreaInches, 
+        totalPixels: frontTotalAreaPixels, 
+        perLayer: frontPerLayerMetrics 
+      });
+      
+      setBackCustomizationCost(backMaxPrice);
+      setBackDesignMetrics({ 
+        widthInches: backWidthInches, 
+        heightInches: backHeightInches, 
+        areaInches: backAreaInches, 
+        totalPixels: backTotalAreaPixels, 
+        perLayer: backPerLayerMetrics 
+      });
+      
+      console.log(`[Pricing] Front: ₹${frontMaxPrice.toFixed(2)}, Back: ₹${backMaxPrice.toFixed(2)} (based on size presets)`);
     };
 
     // Debounced update to prevent too many rapid calculations
@@ -743,9 +886,8 @@ export default function Customize() {
       updateTimeout = setTimeout(calculateTotalPrice, 100);
     };
 
-    // Add event listeners
+    // Add event listeners (scaling disabled, but keep listener for safety)
     fabricCanvas.on("object:modified", debouncedUpdate);
-    fabricCanvas.on("object:scaling", debouncedUpdate);
     fabricCanvas.on("object:moving", debouncedUpdate);
     fabricCanvas.on("object:rotating", debouncedUpdate);
     fabricCanvas.on("object:added", debouncedUpdate);
@@ -755,13 +897,12 @@ export default function Customize() {
     return () => {
       clearTimeout(updateTimeout);
       fabricCanvas.off("object:modified", debouncedUpdate);
-      fabricCanvas.off("object:scaling", debouncedUpdate);
       fabricCanvas.off("object:moving", debouncedUpdate);
       fabricCanvas.off("object:rotating", debouncedUpdate);
       fabricCanvas.off("object:added", debouncedUpdate);
       fabricCanvas.off("object:removed", debouncedUpdate);
     };
-  }, [fabricCanvas, basePrice, designSide]);
+  }, [fabricCanvas, basePrice, frontDesignLayers, backDesignLayers]);
 
   // Close color dropdown when clicking outside
   useEffect(() => {
@@ -955,16 +1096,34 @@ export default function Customize() {
       toast.success("Text updated!");
     } else {
       // Add new text
+      const sizePreset = STANDARD_DESIGN_SIZES.find(s => s.id === selectedDesignSize) || STANDARD_DESIGN_SIZES[2];
+      // Calculate font size to fit within the standard size (approximate)
+      const maxDimension = Math.max(sizePreset.width, sizePreset.height);
+      const calculatedFontSize = Math.min(fontSize, maxDimension * 0.3); // Scale font to fit
+      
       const text = new FabricText(content, {
         left: 200,
         top: 250,
-        fontSize: fontSize,
+        fontSize: calculatedFontSize,
         fill: textColor,
         fontFamily: selectedFont,
       });
       (text as any).name = "custom-text";
       (text as any).layerId = `text-${Date.now()}`;
       (text as any).designSide = designSide;
+      (text as any).designSizeId = selectedDesignSize; // Store the size preset ID
+
+      // Apply size constraints
+      configureObjectControls(text);
+      
+      // Scale text to fit within standard size if needed
+      const textBBox = text.getBoundingRect();
+      if (textBBox.width > sizePreset.width || textBBox.height > sizePreset.height) {
+        const scaleX = sizePreset.width / textBBox.width;
+        const scaleY = sizePreset.height / textBBox.height;
+        const scale = Math.min(scaleX, scaleY, 1); // Don't scale up, only down
+        text.scale(scale);
+      }
 
       fabricCanvas.add(text);
       fabricCanvas.setActiveObject(text);
@@ -986,6 +1145,7 @@ export default function Customize() {
         },
         // Fixed cost for layer tracking (not used for pricing anymore)
         cost: selectedProduct?.customizationPricing?.perTextLayer || 10,
+        designSizeId: selectedDesignSize, // Save the size preset ID
       };
       setDesignLayers([...designLayers, layer]);
 
@@ -1004,25 +1164,33 @@ export default function Customize() {
     reader.onload = async (f) => {
       const data = f.target?.result as string;
       FabricImage.fromURL(data).then((img) => {
-        // --- Visual fit logic ---
+        // Get the selected size preset
+        const sizePreset = STANDARD_DESIGN_SIZES.find(s => s.id === selectedDesignSize) || STANDARD_DESIGN_SIZES[2];
+        
+        // Calculate scale to fit within standard size
         const iw = img.width || 1;
         const ih = img.height || 1;
-        let scale = 1;
-        if (iw > MAX_PRINTABLE_WIDTH || ih > MAX_PRINTABLE_HEIGHT) {
-          scale = Math.min(MAX_PRINTABLE_WIDTH / iw, MAX_PRINTABLE_HEIGHT / ih);
-        }
+        const maxW = sizePreset.width;
+        const maxH = sizePreset.height;
+        
+        // Scale to fit within the standard size while maintaining aspect ratio
+        const scaleToFit = Math.min(maxW / iw, maxH / ih, 1); // Don't scale up, only down
+        
         img.set({
           left: 200,
           top: 200,
-          scaleX: scale, // visually fit
-          scaleY: scale,
+          scaleX: scaleToFit,
+          scaleY: scaleToFit,
           selectable: true,
-          hasControls: true,
         });
         (img as any).name = "custom-image";
         (img as any).layerId = Date.now().toString();
         (img as any).dpi = dpi; // ✅ Store per image DPI
         (img as any).designSide = designSide;
+        (img as any).designSizeId = selectedDesignSize; // Store the size preset ID
+
+        // Apply size constraints (disable resizing)
+        configureObjectControls(img);
   
         fabricCanvas.add(img);
         fabricCanvas.setActiveObject(img);
@@ -1040,6 +1208,7 @@ export default function Customize() {
             dpi: dpi, // ✅ Save DPI in layer state
           },
           cost: selectedProduct?.customizationPricing?.perImageLayer || 20,
+          designSizeId: selectedDesignSize, // Save the size preset ID
         };
   
         if (designSide === "front") {
@@ -1084,6 +1253,98 @@ export default function Customize() {
     if (activeObject) {
       activeObject.rotate((activeObject.angle || 0) + 15);
       fabricCanvas.renderAll();
+    }
+  };
+
+  // Helper function to apply size preset to an object
+  const applySizePresetToObject = (obj: any, sizePreset: typeof STANDARD_DESIGN_SIZES[0], recalculateFromOriginal: boolean = false) => {
+    if (obj.name === "custom-text") {
+      // For text, we need to get dimensions at scale 1
+      const currentScale = obj.scaleX || 1;
+      
+      // Temporarily reset scale to get true dimensions
+      obj.scaleX = 1;
+      obj.scaleY = 1;
+      const textBBox = obj.getBoundingRect();
+      const originalWidth = textBBox.width;
+      const originalHeight = textBBox.height;
+      
+      // Calculate scale needed to fit within new size preset
+      const scaleX = sizePreset.width / originalWidth;
+      const scaleY = sizePreset.height / originalHeight;
+      const newScale = Math.min(scaleX, scaleY, 1); // Don't scale up, only down
+      
+      // Apply the new scale
+      obj.scaleX = newScale;
+      obj.scaleY = newScale;
+      
+      // Re-apply constraints
+      configureObjectControls(obj);
+      
+    } else if (obj.name === "custom-image") {
+      // For images, get original dimensions (at scale 1)
+      const originalWidth = obj.width || 1;
+      const originalHeight = obj.height || 1;
+      
+      // Calculate scale to fit within the new size preset
+      const scaleX = sizePreset.width / originalWidth;
+      const scaleY = sizePreset.height / originalHeight;
+      const newScale = Math.min(scaleX, scaleY, 1); // Don't scale up, only down
+      
+      // Apply new scale from original dimensions
+      obj.scaleX = newScale;
+      obj.scaleY = newScale;
+      
+      // Re-apply constraints
+      configureObjectControls(obj);
+    }
+  };
+
+  // Change size of selected object
+  const handleChangeObjectSize = (sizeId: string) => {
+    if (!fabricCanvas) return;
+    
+    const activeObject = fabricCanvas.getActiveObject();
+    if (!activeObject || ((activeObject as any).name !== "custom-text" && (activeObject as any).name !== "custom-image")) {
+      toast.error("Please select a text or image element to change its size");
+      return;
+    }
+
+    const sizePreset = STANDARD_DESIGN_SIZES.find(s => s.id === sizeId);
+    if (!sizePreset) return;
+
+    const obj = activeObject as any;
+    
+    // Apply the size preset
+    applySizePresetToObject(obj, sizePreset);
+    
+    // Update the stored size ID
+    obj.designSizeId = sizeId;
+    
+    fabricCanvas.renderAll();
+    toast.success(`Size changed to ${sizePreset.name}`);
+  };
+
+  // Refresh all objects on canvas to use current size preset dimensions
+  const refreshAllObjectSizes = () => {
+    if (!fabricCanvas) return;
+    
+    const objects = fabricCanvas.getObjects();
+    let updatedCount = 0;
+    
+    objects.forEach((obj: any) => {
+      if ((obj.name === "custom-text" || obj.name === "custom-image") && obj.designSizeId) {
+        const sizePreset = STANDARD_DESIGN_SIZES.find(s => s.id === obj.designSizeId);
+        if (sizePreset) {
+          applySizePresetToObject(obj, sizePreset);
+          updatedCount++;
+        }
+      }
+    });
+    
+    if (updatedCount > 0) {
+      fabricCanvas.renderAll();
+      toast.success(`Updated ${updatedCount} element(s) with new size dimensions`);
     }
   };
 
@@ -1163,6 +1424,10 @@ export default function Customize() {
             color: obj.fill || next.data.color,
             font: obj.fontFamily || next.data.font,
           } as any;
+          // Sync the size preset ID from the canvas object
+          if (obj.designSizeId) {
+            next.designSizeId = obj.designSizeId;
+          }
           return next;
         });
       };
@@ -1357,6 +1622,10 @@ export default function Customize() {
             color: obj.fill || next.data.color,
             font: obj.fontFamily || next.data.font,
           } as any;
+          // Sync the size preset ID from the canvas object
+          if (obj.designSizeId) {
+            next.designSizeId = obj.designSizeId;
+          }
           return next;
         });
       };
@@ -1875,6 +2144,12 @@ export default function Customize() {
                 <Trash2 className="mr-2 h-4 w-4" />
                 Delete
               </Button>
+              {IS_DEVELOPMENT && (
+                <Button variant="outline" size="sm" onClick={refreshAllObjectSizes} title="Refresh all elements to use updated size dimensions">
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  Refresh Sizes
+                </Button>
+              )}
               <Button variant="outline" size="sm" onClick={handleReset}>
                 Reset Design
               </Button>
@@ -1898,6 +2173,35 @@ export default function Customize() {
           {/* Right Sidebar - Customization Tools */}
           <Card className="h-fit">
             <CardContent className="p-6">
+              {/* Design Size Selector */}
+              <div className="mb-6 pb-6 border-b">
+                <Label className="mb-3 block text-base font-semibold">Design Size</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  {STANDARD_DESIGN_SIZES.map((size) => (
+                    <Button
+                      key={size.id}
+                      variant={selectedDesignSize === size.id ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => {
+                        setSelectedDesignSize(size.id);
+                        // If an object is selected, also change its size
+                        if (fabricCanvas?.getActiveObject()) {
+                          handleChangeObjectSize(size.id);
+                        }
+                      }}
+                      className="flex flex-col h-auto py-2"
+                    >
+                      <span className="text-xs font-medium">{size.name}</span>
+                      <span className="text-xs text-muted-foreground">{size.description}</span>
+                      <span className="text-xs font-semibold text-primary mt-1">₹{size.price}</span>
+                    </Button>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Select a size before adding elements, or change size of selected element
+                </p>
+              </div>
+
               <Tabs defaultValue="text" className="w-full">
                 <TabsList className="grid w-full grid-cols-2">
                   <TabsTrigger value="text">

@@ -35,6 +35,7 @@ type OrderDetails = Order & {
           id?: string;
           type?: string;
           data?: { url?: string };
+          designSizeId?: string; // Size preset ID (pocket, small, medium, large)
         }>;
         // Metrics injected from storefront at add-to-cart time
         metrics?: {
@@ -61,6 +62,7 @@ type OrderDetails = Order & {
           id?: string;
           type?: string;
           data?: { url?: string };
+          designSizeId?: string; // Size preset ID (pocket, small, medium, large)
         }>;
         metrics?: {
           widthInches?: number;
@@ -170,6 +172,18 @@ export function Orders() {
     return per.find((m) => m.id === layerId) || null
   }
 
+  // Helper: get size name from design size ID
+  function getSizeName(sizeId?: string): string {
+    if (!sizeId) return 'Unknown'
+    const sizeMap: Record<string, string> = {
+      'pocket': 'Pocket Size',
+      'small': 'Small',
+      'medium': 'Medium',
+      'large': 'Large'
+    }
+    return sizeMap[sizeId] || sizeId
+  }
+
   return (
     <section>
       <h2>Orders</h2>
@@ -269,16 +283,16 @@ export function Orders() {
                                             style={{ width: 60, height: 60, objectFit: 'contain', borderRadius: 6, background: 'var(--panel)', border: '1px solid var(--border)', cursor: 'zoom-in' }}
                                             onClick={() => openImageZoom(layer.data!.url!)}
                                           />
-                                          {/* Dimensions label (inches) if metrics available */}
-                                          {(() => {
-                                            const m = findLayerMetrics('front', item, layer.id)
-                                            if (!m) return null
-                                            return (
-                                              <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                                                {m.widthInches.toFixed(2)}" × {m.heightInches.toFixed(2)}"
-                                              </div>
-                                            )
-                                          })()}
+                                          {/* Design Size ID */}
+                                          {layer.designSizeId ? (
+                                            <div style={{ fontSize: 11, color: 'var(--muted)', fontWeight: '500' }}>
+                                              {getSizeName(layer.designSizeId)}
+                                            </div>
+                                          ) : (
+                                            <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                                              Size: Unknown
+                                            </div>
+                                          )}
                                           <button
                                             style={{ fontSize: 12, padding: '4px 6px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--panel)', cursor: 'pointer' }}
                                             onClick={() => downloadImage(layer.data!.url!, `front-layer-${lIdx + 1}.png`)}
@@ -318,16 +332,16 @@ export function Orders() {
                                             style={{ width: 60, height: 60, objectFit: 'contain', borderRadius: 6, background: 'var(--panel)', border: '1px solid var(--border)', cursor: 'zoom-in' }}
                                             onClick={() => openImageZoom(layer.data!.url!)}
                                           />
-                                          {/* Dimensions label (inches) if metrics available */}
-                                          {(() => {
-                                            const m = findLayerMetrics('back', item, layer.id)
-                                            if (!m) return null
-                                            return (
-                                              <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                                                {m.widthInches.toFixed(2)}" × {m.heightInches.toFixed(2)}"
-                                              </div>
-                                            )
-                                          })()}
+                                          {/* Design Size ID */}
+                                          {layer.designSizeId ? (
+                                            <div style={{ fontSize: 11, color: 'var(--muted)', fontWeight: '500' }}>
+                                              {getSizeName(layer.designSizeId)}
+                                            </div>
+                                          ) : (
+                                            <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                                              Size: Unknown
+                                            </div>
+                                          )}
                                           <button
                                             style={{ fontSize: 12, padding: '4px 6px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--panel)', cursor: 'pointer' }}
                                             onClick={() => downloadImage(layer.data!.url!, `back-layer-${lIdx + 1}.png`)}
